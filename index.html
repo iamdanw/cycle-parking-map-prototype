@@ -28,7 +28,7 @@
       padding: 12px 14px;
       font-size: 13px;
       line-height: 1.45;
-      max-width: 280px;
+      max-width: min(92vw, 360px);
     }
     .maplibregl-popup-content h3 {
       margin: 0 0 8px;
@@ -43,7 +43,27 @@
     .maplibregl-popup-content dt { color: #555; }
     .maplibregl-popup-content dd { margin: 0; }
     .maplibregl-popup-content .photos { margin-top: 10px; }
-    .maplibregl-popup-content .photos a { margin-right: 10px; }
+    .maplibregl-popup-content .photos details.popup-photo {
+      margin: 0 0 8px;
+    }
+    .maplibregl-popup-content .photos details.popup-photo:last-child {
+      margin-bottom: 0;
+    }
+    .maplibregl-popup-content .photos details.popup-photo summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      color: #333;
+      user-select: none;
+    }
+    .maplibregl-popup-content .photos details.popup-photo img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin-top: 8px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
     .maplibregl-popup-content details.popup-json {
       margin-top: 12px;
       border-top: 1px solid #e8e8e8;
@@ -200,8 +220,20 @@
         var photos = '';
         if (p1 || p2) {
           photos = '<div class="photos">';
-          if (p1) photos += '<a href="' + escapeHtml(p1) + '" target="_blank" rel="noopener">Photo 1</a>';
-          if (p2) photos += '<a href="' + escapeHtml(p2) + '" target="_blank" rel="noopener">Photo 2</a>';
+          if (p1) {
+            photos +=
+              '<details class="popup-photo">' +
+              '<summary>Photo 1</summary>' +
+              '<img src="' + escapeHtml(p1) + '" alt="Cycle parking photo 1" loading="lazy" />' +
+              '</details>';
+          }
+          if (p2) {
+            photos +=
+              '<details class="popup-photo">' +
+              '<summary>Photo 2</summary>' +
+              '<img src="' + escapeHtml(p2) + '" alt="Cycle parking photo 2" loading="lazy" />' +
+              '</details>';
+          }
           photos += '</div>';
         }
         var jsonSection = '';

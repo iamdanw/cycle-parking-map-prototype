@@ -16,11 +16,31 @@
     .filter-sidebar {
       width: 260px;
       flex-shrink: 0;
-      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
       border-right: 1px solid #ddd;
       background: #f8f9fa;
       padding: 12px 14px;
       font-size: 13px;
+    }
+    .filter-sidebar-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    .filter-sidebar-footer {
+      flex-shrink: 0;
+      margin: 14px 0 0;
+      padding-top: 10px;
+      border-top: 1px solid #ddd;
+      font-size: 11px;
+      line-height: 1.4;
+      color: #555;
+    }
+    .filter-sidebar-footer a {
+      color: #0d47a1;
     }
     .filter-sidebar fieldset {
       border: 0;
@@ -336,7 +356,19 @@
           labelEl.appendChild(document.createTextNode(PRK_LABELS[key]));
           fieldset.appendChild(labelEl);
         }
-        aside.appendChild(fieldset);
+        var body = document.createElement('div');
+        body.className = 'filter-sidebar-body';
+        body.appendChild(fieldset);
+        aside.appendChild(body);
+
+        var footer = document.createElement('p');
+        footer.className = 'filter-sidebar-footer';
+        var tflLink = document.createElement('a');
+        tflLink.href = 'https://cycling.data.tfl.gov.uk/#!CyclingInfrastructure%2F';
+        tflLink.textContent = 'Powered by TfL Open Data';
+        footer.appendChild(tflLink);
+        aside.appendChild(footer);
+
         fieldset.addEventListener('change', function () {
           applyPrkFilters(map);
         });

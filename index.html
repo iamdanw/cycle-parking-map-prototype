@@ -153,21 +153,6 @@
       position: absolute;
       inset: 0;
     }
-    .hint {
-      position: absolute;
-      z-index: 1;
-      top: 12px;
-      left: 50%;
-      transform: translateX(-50%);
-      max-width: min(90vw, 420px);
-      padding: 8px 14px;
-      font-size: 13px;
-      color: #1a1a1a;
-      background: rgba(255, 255, 255, 0.92);
-      border-radius: 8px;
-      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
-      pointer-events: none;
-    }
     .maplibregl-popup-content {
       padding: 12px 14px;
       font-size: 13px;
@@ -232,21 +217,6 @@
       border-radius: 6px;
       padding: 10px;
     }
-    .zoom-readout {
-      position: absolute;
-      z-index: 1;
-      bottom: 12px;
-      left: 12px;
-      margin: 0;
-      padding: 8px 12px;
-      font-size: 13px;
-      font-variant-numeric: tabular-nums;
-      color: #1a1a1a;
-      background: rgba(255, 255, 255, 0.92);
-      border-radius: 8px;
-      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
-      pointer-events: none;
-    }
   </style>
 </head>
 <body>
@@ -263,8 +233,6 @@
       >
         Filters
       </button>
-      <p class="hint">Zoom in past 13: circles are coloured by primary facility type (first match in TfL fields, excluding carriageway).</p>
-      <p id="zoom-readout" class="zoom-readout" aria-live="polite" aria-label="Current map zoom level">Zoom: —</p>
       <div id="map" role="application" aria-label="Cycle parking map"></div>
     </div>
   </div>
@@ -677,14 +645,6 @@
       }
 
       map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
-      var zoomReadoutEl = document.getElementById('zoom-readout');
-      function updateZoomReadout() {
-        zoomReadoutEl.textContent = 'Zoom: ' + map.getZoom().toFixed(2);
-      }
-      map.on('zoom', updateZoomReadout);
-      map.on('zoomend', updateZoomReadout);
-      updateZoomReadout();
 
       map.on('load', function () {
         fetch('data/cycle_parking.json')

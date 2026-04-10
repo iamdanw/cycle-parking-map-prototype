@@ -8,21 +8,7 @@
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
-    .map-shell { position: fixed; inset: 0; }
-    #map { position: absolute; inset: 0; }
-    #d3-label-overlay {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 1;
-      pointer-events: none;
-      overflow: visible;
-    }
-    #d3-label-overlay text.force-prk-label {
-      pointer-events: auto;
-      cursor: pointer;
-    }
+    #map { position: fixed; inset: 0; }
     .hint {
       position: fixed;
       z-index: 1;
@@ -100,14 +86,10 @@
   </style>
 </head>
 <body>
-  <p class="hint">Zoom in past 13 for circles; PRK_CPT labels use a D3-force overlay (viewport-limited) with collision and spring-to-point.</p>
+  <p class="hint">Zoom in past 13 to see parking points; click a point for details and GeoJSON.</p>
   <p id="zoom-readout" class="zoom-readout" aria-live="polite" aria-label="Current map zoom level">Zoom: —</p>
-  <div class="map-shell">
-    <div id="map" role="application" aria-label="Cycle parking map"></div>
-    <svg id="d3-label-overlay" aria-hidden="true"></svg>
-  </div>
+  <div id="map" role="application" aria-label="Cycle parking map"></div>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
   <script>
     (function () {
       var PRK_LABELS = {
@@ -130,7 +112,7 @@
       /** Circles and capacity labels hidden until zoom is greater than this */
       var ZOOM_CIRCLE_SHOW = 13;
 
-      /** Opacity for circle + symbol layers: 0 at zoom <= ZOOM_CIRCLE_SHOW, ramps to 1 by ZOOM_CIRCLE_SHOW + 1 */
+      /** Opacity for circle layer: 0 at zoom <= ZOOM_CIRCLE_SHOW, ramps to 1 by ZOOM_CIRCLE_SHOW + 1 */
       var circleOpacityExpr = [
         'interpolate',
         ['linear'],
@@ -267,231 +249,6 @@
         return [[minX, minY], [maxX, maxY]];
       }
 
-      /**
-       * D3-force SVG overlay: non-overlapping PRK_CPT labels with spring-to-anchor + collision.
-       * Viewport-limited and capped for performance (~24k points in dataset).
-       */
-      function setupForceLabelOverlay(map, geojson) {
-        if (typeof d3 === 'undefined') {
-          console.warn('d3 not loaded; force labels disabled');
-          return;
-        }
-
-        var MAX_FORCE_LABELS = 850;
-        var svg = d3.select('#d3-label-overlay');
-        var gLines = svg.selectAll('g.leader-lines').data([0]).join('g').attr('class', 'leader-lines');
-        var gLabels = svg.selectAll('g.force-labels').data([0]).join('g').attr('class', 'force-labels');
-        var simulation = null;
-        var nodes = [];
-        var debounceId = null;
-
-        function forceMapAnchor(mapRef, k) {
-          var nds;
-          function force(alpha) {
-            for (var i = 0; i < nds.length; i++) {
-              var d = nds[i];
-              var p = mapRef.project([d.lng, d.lat]);
-              d.vx += (p.x - d.x) * k * alpha;
-              d.vy += (p.y - d.y) * k * alpha;
-            }
-          }
-          force.initialize = function (init) {
-            nds = init;
-          };
-          return force;
-        }
-
-        function nodeKey(d) {
-          return d.props.FEATURE_ID != null ? String(d.props.FEATURE_ID) : String(d.lng) + ',' + String(d.lat);
-        }
-
-        function collectVisibleFeatures() {
-          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return [];
-          var b = map.getBounds();
-          var padX = (b.getEast() - b.getWest()) * 0.12;
-          var padY = (b.getNorth() - b.getSouth()) * 0.12;
-          var west = b.getWest() - padX;
-          var east = b.getEast() + padX;
-          var south = b.getSouth() - padY;
-          var north = b.getNorth() + padY;
-          var feats = geojson.features || [];
-          var out = [];
-          for (var i = 0; i < feats.length; i++) {
-            var f = feats[i];
-            var g = f.geometry;
-            if (!g || g.type !== 'Point') continue;
-            var c = f.geometry.coordinates;
-            if (c[0] < west || c[0] > east || c[1] < south || c[1] > north) continue;
-            out.push(f);
-          }
-          if (out.length > MAX_FORCE_LABELS) {
-            var step = Math.ceil(out.length / MAX_FORCE_LABELS);
-            var thin = [];
-            for (var j = 0; j < out.length; j += step) thin.push(out[j]);
-            out = thin;
-          }
-          return out;
-        }
-
-        function clearOverlay() {
-          gLines.selectAll('*').remove();
-          gLabels.selectAll('*').remove();
-          if (simulation) {
-            simulation.stop();
-            simulation = null;
-          }
-          nodes = [];
-        }
-
-        function onLabelClick(event, d) {
-          event.stopPropagation();
-          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
-          new maplibregl.Popup({ maxWidth: '360px' })
-            .setLngLat([d.lng, d.lat])
-            .setHTML(popupHtml(d.props, [d.lng, d.lat]))
-            .addTo(map);
-        }
-
-        function render() {
-          gLines
-            .selectAll('line')
-            .data(nodes, nodeKey)
-            .join('line')
-            .attr('stroke', 'rgba(26, 95, 180, 0.82)')
-            .attr('stroke-width', 1.6)
-            .attr('stroke-linecap', 'round')
-            .attr('x1', function (d) {
-              return map.project([d.lng, d.lat]).x;
-            })
-            .attr('y1', function (d) {
-              return map.project([d.lng, d.lat]).y;
-            })
-            .attr('x2', function (d) {
-              return d.x;
-            })
-            .attr('y2', function (d) {
-              return d.y;
-            });
-
-          gLabels
-            .selectAll('text')
-            .data(nodes, nodeKey)
-            .join(
-              function (enter) {
-                return enter
-                  .append('text')
-                  .attr('class', 'force-prk-label')
-                  .attr('fill', '#0d1117')
-                  .attr('stroke', '#fff')
-                  .attr('stroke-width', 2.5)
-                  .attr('paint-order', 'stroke')
-                  .attr('text-anchor', 'middle')
-                  .attr('dominant-baseline', 'middle')
-                  .style('font-size', '11px')
-                  .style('font-weight', '600')
-                  .on('click.forceprk', onLabelClick)
-                  .on('mouseenter.forceprk', function () {
-                    if (map.getZoom() > ZOOM_CIRCLE_SHOW) map.getCanvas().style.cursor = 'pointer';
-                  })
-                  .on('mouseleave.forceprk', function () {
-                    map.getCanvas().style.cursor = '';
-                  });
-              },
-              function (update) {
-                return update;
-              },
-              function (exit) {
-                return exit.remove();
-              }
-            )
-            .attr('x', function (d) {
-              return d.x;
-            })
-            .attr('y', function (d) {
-              return d.y;
-            })
-            .text(function (d) {
-              return d.label;
-            });
-        }
-
-        function runRebuild() {
-          clearOverlay();
-          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
-
-          var feats = collectVisibleFeatures();
-          if (!feats.length) return;
-
-          nodes = feats.map(function (f) {
-            var c = f.geometry.coordinates;
-            var props = f.properties || {};
-            var prk = props.PRK_CPT;
-            var label = prk != null && prk !== '' ? String(prk) : '—';
-            var p0 = map.project([c[0], c[1]]);
-            return {
-              lng: c[0],
-              lat: c[1],
-              props: props,
-              label: label,
-              r: Math.max(12, label.length * 5 + 8),
-              x: p0.x + (Math.random() - 0.5) * 8,
-              y: p0.y + (Math.random() - 0.5) * 8,
-              vx: 0,
-              vy: 0
-            };
-          });
-
-          simulation = d3
-            .forceSimulation(nodes)
-            .velocityDecay(0.48)
-            .alphaDecay(0.038)
-            .alphaMin(0.001)
-            .force('charge', d3.forceManyBody().strength(-32))
-            .force('collide', d3.forceCollide().radius(function (d) {
-              return d.r;
-            }).iterations(2))
-            .force('anchor', forceMapAnchor(map, 0.24))
-            .on('tick', render);
-
-          var preTicks = 100;
-          for (var t = 0; t < preTicks; t++) {
-            simulation.tick();
-          }
-          render();
-          simulation.alpha(1).restart();
-        }
-
-        function scheduleRebuild() {
-          if (debounceId) clearTimeout(debounceId);
-          debounceId = setTimeout(function () {
-            debounceId = null;
-            runRebuild();
-          }, 80);
-        }
-
-        map.on('moveend', scheduleRebuild);
-        map.on('zoomend', scheduleRebuild);
-        map.on('resize', scheduleRebuild);
-        var lastMoveBoost = 0;
-        map.on('move', function () {
-          if (!simulation || map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
-          var now = Date.now();
-          if (now - lastMoveBoost < 45) return;
-          lastMoveBoost = now;
-          simulation.alpha(Math.max(simulation.alpha(), 0.1)).restart();
-        });
-        map.on('zoom', function () {
-          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) {
-            clearOverlay();
-          } else {
-            scheduleRebuild();
-          }
-        });
-
-        map.once('idle', runRebuild);
-        scheduleRebuild();
-      }
-
       var map = new maplibregl.Map({
         container: 'map',
         attributionControl: true,
@@ -619,8 +376,6 @@
             });
 
             map.fitBounds(bounds, { padding: 48, maxZoom: 14 });
-
-            setupForceLabelOverlay(map, geojson);
 
             var CLICK_QUERY_RADIUS_PX = 20;
 

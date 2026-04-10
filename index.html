@@ -8,9 +8,59 @@
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
-    #map { position: fixed; inset: 0; }
+    .app {
+      display: flex;
+      height: 100%;
+      width: 100%;
+    }
+    .filter-sidebar {
+      width: 260px;
+      flex-shrink: 0;
+      overflow-y: auto;
+      border-right: 1px solid #ddd;
+      background: #f8f9fa;
+      padding: 12px 14px;
+      font-size: 13px;
+    }
+    .filter-sidebar fieldset {
+      border: 0;
+      margin: 0;
+      padding: 0;
+    }
+    .filter-sidebar legend {
+      font-weight: 600;
+      padding: 0 0 8px;
+      margin: 0;
+    }
+    .prk-filter-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+      cursor: pointer;
+    }
+    .prk-filter-row input {
+      flex-shrink: 0;
+    }
+    .prk-filter-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+    }
+    .map-column {
+      flex: 1;
+      min-width: 0;
+      position: relative;
+      height: 100%;
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+    }
     .hint {
-      position: fixed;
+      position: absolute;
       z-index: 1;
       top: 12px;
       left: 50%;
@@ -89,7 +139,7 @@
       padding: 10px;
     }
     .zoom-readout {
-      position: fixed;
+      position: absolute;
       z-index: 1;
       bottom: 12px;
       left: 12px;
@@ -106,9 +156,14 @@
   </style>
 </head>
 <body>
-  <p class="hint">Zoom in past 13 to see parking points; click a point for details and GeoJSON.</p>
-  <p id="zoom-readout" class="zoom-readout" aria-live="polite" aria-label="Current map zoom level">Zoom: —</p>
-  <div id="map" role="application" aria-label="Cycle parking map"></div>
+  <div class="app">
+    <aside class="filter-sidebar" id="filter-sidebar" aria-label="Facility type filters"></aside>
+    <div class="map-column">
+      <p class="hint">Zoom in past 13: circles are coloured by primary facility type (first match in TfL fields, excluding carriageway).</p>
+      <p id="zoom-readout" class="zoom-readout" aria-live="polite" aria-label="Current map zoom level">Zoom: —</p>
+      <div id="map" role="application" aria-label="Cycle parking map"></div>
+    </div>
+  </div>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script>
     (function () {
@@ -128,6 +183,55 @@
         PRK_TIER: 'Tiered',
         PRK_OTHER: 'Other'
       };
+
+      /** Facility keys used for circle colour (same order as PRK_LABELS, excluding PRK_CARR) */
+      var PRK_CATEGORY_ORDER = Object.keys(PRK_LABELS).filter(function (k) {
+        return k !== 'PRK_CARR';
+      });
+
+      var PRK_CATEGORY_COLORS = {
+        PRK_COVER: '#1565c0',
+        PRK_SECURE: '#2e7d32',
+        PRK_LOCKER: '#f9a825',
+        PRK_SHEFF: '#6a1b9a',
+        PRK_MSTAND: '#ef6c00',
+        PRK_PSTAND: '#00838f',
+        PRK_HOOP: '#ad1457',
+        PRK_POST: '#558b2f',
+        PRK_BUTERF: '#00897b',
+        PRK_WHEEL: '#4527a0',
+        PRK_HANGAR: '#c62828',
+        PRK_TIER: '#5d4037',
+        PRK_OTHER: '#616161',
+        NONE: '#90a4ae'
+      };
+
+      function primaryPrkCategory(props) {
+        for (var i = 0; i < PRK_CATEGORY_ORDER.length; i++) {
+          var k = PRK_CATEGORY_ORDER[i];
+          if (props[k] === 'TRUE') return k;
+        }
+        return 'NONE';
+      }
+
+      function assignPrimaryPrkToGeoJSON(geojson) {
+        var feats = geojson.features || [];
+        for (var i = 0; i < feats.length; i++) {
+          var f = feats[i];
+          if (!f.properties) f.properties = {};
+          f.properties.PRIMARY_PRK = primaryPrkCategory(f.properties);
+        }
+      }
+
+      function circleColorMatchExpression() {
+        var expr = ['match', ['get', 'PRIMARY_PRK']];
+        for (var j = 0; j < PRK_CATEGORY_ORDER.length; j++) {
+          var key = PRK_CATEGORY_ORDER[j];
+          expr.push(key, PRK_CATEGORY_COLORS[key]);
+        }
+        expr.push(PRK_CATEGORY_COLORS.NONE);
+        return expr;
+      }
 
       /** Circles and capacity labels hidden until zoom is greater than this */
       var ZOOM_CIRCLE_SHOW = 13;
@@ -171,6 +275,74 @@
         4
       ];
 
+      /** Default view leaves PRK_HANGAR and PRK_CARR unchecked so hangar-only or carriageway-only sites stay hidden until enabled. */
+      function buildPrkFilterExpression(enabledKeys) {
+        var allKeys = Object.keys(PRK_LABELS);
+        if (enabledKeys.length === allKeys.length) {
+          var set = {};
+          for (var i = 0; i < enabledKeys.length; i++) set[enabledKeys[i]] = true;
+          var complete = true;
+          for (var j = 0; j < allKeys.length; j++) {
+            if (!set[allKeys[j]]) {
+              complete = false;
+              break;
+            }
+          }
+          if (complete) return null;
+        }
+        if (enabledKeys.length === 0) return ['literal', false];
+        var parts = ['any'];
+        for (var k = 0; k < enabledKeys.length; k++) {
+          parts.push(['==', ['get', enabledKeys[k]], 'TRUE']);
+        }
+        return parts;
+      }
+
+      function applyPrkFilters(map) {
+        var aside = document.getElementById('filter-sidebar');
+        if (!aside || !map.getLayer('parking-point')) return;
+        var inputs = aside.querySelectorAll('input[type="checkbox"][data-prk]');
+        var enabled = [];
+        for (var i = 0; i < inputs.length; i++) {
+          if (inputs[i].checked) enabled.push(inputs[i].getAttribute('data-prk'));
+        }
+        var expr = buildPrkFilterExpression(enabled);
+        map.setFilter('parking-point', expr);
+        map.setFilter('parking-heat', expr);
+      }
+
+      function initPrkFilterSidebar(map) {
+        var aside = document.getElementById('filter-sidebar');
+        if (!aside || aside.querySelector('fieldset')) return;
+        var fieldset = document.createElement('fieldset');
+        var legend = document.createElement('legend');
+        legend.textContent = 'Facility types';
+        fieldset.appendChild(legend);
+        var keys = Object.keys(PRK_LABELS);
+        for (var idx = 0; idx < keys.length; idx++) {
+          var key = keys[idx];
+          var labelEl = document.createElement('label');
+          labelEl.className = 'prk-filter-row';
+          var input = document.createElement('input');
+          input.type = 'checkbox';
+          input.setAttribute('data-prk', key);
+          input.checked = key !== 'PRK_HANGAR' && key !== 'PRK_CARR';
+          var dot = document.createElement('span');
+          dot.className = 'prk-filter-dot';
+          dot.style.background =
+            PRK_CATEGORY_COLORS[key] != null ? PRK_CATEGORY_COLORS[key] : PRK_CATEGORY_COLORS.NONE;
+          labelEl.appendChild(input);
+          labelEl.appendChild(dot);
+          labelEl.appendChild(document.createTextNode(PRK_LABELS[key]));
+          fieldset.appendChild(labelEl);
+        }
+        aside.appendChild(fieldset);
+        fieldset.addEventListener('change', function () {
+          applyPrkFilters(map);
+        });
+        applyPrkFilters(map);
+      }
+
       function activeFacilityLabels(props) {
         var out = [];
         for (var k in PRK_LABELS) {
@@ -193,7 +365,9 @@
       function clonePropsForJson(props) {
         var o = {};
         for (var k in props) {
-          if (Object.prototype.hasOwnProperty.call(props, k)) o[k] = props[k];
+          if (!Object.prototype.hasOwnProperty.call(props, k)) continue;
+          if (k === 'PRIMARY_PRK') continue;
+          o[k] = props[k];
         }
         return o;
       }
@@ -350,6 +524,7 @@
             return r.json();
           })
           .then(function (geojson) {
+            assignPrimaryPrkToGeoJSON(geojson);
             var bounds = boundsFromGeoJSON(geojson);
 
             map.addSource('parking', {
@@ -424,13 +599,15 @@
                   18,
                   11.5
                 ],
-                'circle-color': '#1a5fb4',
+                'circle-color': circleColorMatchExpression(),
                 'circle-stroke-width': 1,
                 'circle-stroke-color': '#ffffff',
                 'circle-stroke-opacity': circleOpacityExpr,
                 'circle-opacity': circleOpacityExpr
               }
             });
+
+            initPrkFilterSidebar(map);
 
             map.fitBounds(bounds, { padding: 48, maxZoom: 14 });
 

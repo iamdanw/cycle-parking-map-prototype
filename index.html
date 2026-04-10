@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cycle parking map</title>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+    .map-shell { position: fixed; inset: 0; }
+    #map { position: absolute; inset: 0; }
+    #d3-label-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+      overflow: visible;
+    }
+    #d3-label-overlay text.force-prk-label {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+    .hint {
+      position: fixed;
+      z-index: 1;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      max-width: min(90vw, 420px);
+      padding: 8px 14px;
+      font-size: 13px;
+      color: #1a1a1a;
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 8px;
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+      pointer-events: none;
+    }
+    .maplibregl-popup-content {
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.45;
+      max-width: 280px;
+    }
+    .maplibregl-popup-content h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+    .maplibregl-popup-content dl {
+      margin: 0;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 10px;
+    }
+    .maplibregl-popup-content dt { color: #555; }
+    .maplibregl-popup-content dd { margin: 0; }
+    .maplibregl-popup-content .photos { margin-top: 10px; }
+    .maplibregl-popup-content .photos a { margin-right: 10px; }
+    .maplibregl-popup-content details.popup-json {
+      margin-top: 12px;
+      border-top: 1px solid #e8e8e8;
+      padding-top: 10px;
+    }
+    .maplibregl-popup-content details.popup-json summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: #333;
+      user-select: none;
+    }
+    .maplibregl-popup-content details.popup-json pre {
+      margin: 8px 0 0;
+      max-height: 240px;
+      overflow: auto;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f6f8fa;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 10px;
+    }
+    .zoom-readout {
+      position: fixed;
+      z-index: 1;
+      bottom: 12px;
+      left: 12px;
+      margin: 0;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+      color: #1a1a1a;
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 8px;
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <p class="hint">Zoom in past 13 for circles; PRK_CPT labels use a D3-force overlay (viewport-limited) with collision and spring-to-point.</p>
+  <p id="zoom-readout" class="zoom-readout" aria-live="polite" aria-label="Current map zoom level">Zoom: —</p>
+  <div class="map-shell">
+    <div id="map" role="application" aria-label="Cycle parking map"></div>
+    <svg id="d3-label-overlay" aria-hidden="true"></svg>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script>
+    (function () {
+      var PRK_LABELS = {
+        PRK_CARR: 'On carriageway',
+        PRK_COVER: 'Covered',
+        PRK_SECURE: 'Secure',
+        PRK_LOCKER: 'Locker',
+        PRK_SHEFF: 'Sheffield stand',
+        PRK_MSTAND: 'M-stand',
+        PRK_PSTAND: 'P-stand',
+        PRK_HOOP: 'Hoop',
+        PRK_POST: 'Post',
+        PRK_BUTERF: 'Butterfly',
+        PRK_WHEEL: 'Wheel rack',
+        PRK_HANGAR: 'Hangar',
+        PRK_TIER: 'Tiered',
+        PRK_OTHER: 'Other'
+      };
+
+      /** Circles and capacity labels hidden until zoom is greater than this */
+      var ZOOM_CIRCLE_SHOW = 13;
+
+      /** Opacity for circle + symbol layers: 0 at zoom <= ZOOM_CIRCLE_SHOW, ramps to 1 by ZOOM_CIRCLE_SHOW + 1 */
+      var circleOpacityExpr = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        ZOOM_CIRCLE_SHOW,
+        0,
+        ZOOM_CIRCLE_SHOW + 1,
+        1
+      ];
+
+      /** Heatmap stays visible at all zooms; eases down slightly when zoomed in so points and labels stay readable */
+      var heatmapOpacityExpr = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        8,
+        0.88,
+        11,
+        0.78,
+        14,
+        0.58,
+        17,
+        0.45,
+        19,
+        0.4
+      ];
+
+      /** Weight ~ capacity, normalized (typical CPT is small; cap contribution) */
+      var heatmapWeightExpr = [
+        'min',
+        [
+          'max',
+          ['/', ['coalesce', ['to-number', ['get', 'PRK_CPT']], 1], 8],
+          0.15
+        ],
+        4
+      ];
+
+      function activeFacilityLabels(props) {
+        var out = [];
+        for (var k in PRK_LABELS) {
+          if (Object.prototype.hasOwnProperty.call(PRK_LABELS, k) && props[k] === 'TRUE') {
+            out.push(PRK_LABELS[k]);
+          }
+        }
+        return out.length ? out.join(', ') : '—';
+      }
+
+      function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function clonePropsForJson(props) {
+        var o = {};
+        for (var k in props) {
+          if (Object.prototype.hasOwnProperty.call(props, k)) o[k] = props[k];
+        }
+        return o;
+      }
+
+      function pointFeatureGeoJson(props, coordinates) {
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [coordinates[0], coordinates[1]]
+          },
+          properties: clonePropsForJson(props)
+        };
+      }
+
+      function popupHtml(props, coordinates) {
+        var id = escapeHtml(props.FEATURE_ID);
+        var borough = escapeHtml(props.BOROUGH);
+        var cpt = escapeHtml(props.PRK_CPT);
+        var sv = escapeHtml(props.SVDATE);
+        var types = escapeHtml(activeFacilityLabels(props));
+        var p1 = props.PHOTO1_URL;
+        var p2 = props.PHOTO2_URL;
+        var photos = '';
+        if (p1 || p2) {
+          photos = '<div class="photos">';
+          if (p1) photos += '<a href="' + escapeHtml(p1) + '" target="_blank" rel="noopener">Photo 1</a>';
+          if (p2) photos += '<a href="' + escapeHtml(p2) + '" target="_blank" rel="noopener">Photo 2</a>';
+          photos += '</div>';
+        }
+        var jsonSection = '';
+        if (coordinates && coordinates.length >= 2) {
+          var feat = pointFeatureGeoJson(props, coordinates);
+          jsonSection =
+            '<details class="popup-json">' +
+            '<summary>GeoJSON for this point</summary>' +
+            '<pre>' + escapeHtml(JSON.stringify(feat, null, 2)) + '</pre>' +
+            '</details>';
+        }
+        return (
+          '<h3>' + id + '</h3>' +
+          '<dl>' +
+          '<dt>Borough</dt><dd>' + borough + '</dd>' +
+          '<dt>Capacity</dt><dd>' + cpt + '</dd>' +
+          '<dt>Survey date</dt><dd>' + sv + '</dd>' +
+          '<dt>Types</dt><dd>' + types + '</dd>' +
+          '</dl>' +
+          photos +
+          jsonSection
+        );
+      }
+
+      function boundsFromGeoJSON(geojson) {
+        var minX = Infinity;
+        var minY = Infinity;
+        var maxX = -Infinity;
+        var maxY = -Infinity;
+        var features = geojson.features || [];
+        for (var i = 0; i < features.length; i++) {
+          var g = features[i].geometry;
+          if (!g || g.type !== 'Point') continue;
+          var c = g.coordinates;
+          var x = c[0];
+          var y = c[1];
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+        if (minX === Infinity) {
+          return [[-0.51, 51.28], [0.33, 51.69]];
+        }
+        return [[minX, minY], [maxX, maxY]];
+      }
+
+      /**
+       * D3-force SVG overlay: non-overlapping PRK_CPT labels with spring-to-anchor + collision.
+       * Viewport-limited and capped for performance (~24k points in dataset).
+       */
+      function setupForceLabelOverlay(map, geojson) {
+        if (typeof d3 === 'undefined') {
+          console.warn('d3 not loaded; force labels disabled');
+          return;
+        }
+
+        var MAX_FORCE_LABELS = 850;
+        var svg = d3.select('#d3-label-overlay');
+        var gLines = svg.selectAll('g.leader-lines').data([0]).join('g').attr('class', 'leader-lines');
+        var gLabels = svg.selectAll('g.force-labels').data([0]).join('g').attr('class', 'force-labels');
+        var simulation = null;
+        var nodes = [];
+        var debounceId = null;
+
+        function forceMapAnchor(mapRef, k) {
+          var nds;
+          function force(alpha) {
+            for (var i = 0; i < nds.length; i++) {
+              var d = nds[i];
+              var p = mapRef.project([d.lng, d.lat]);
+              d.vx += (p.x - d.x) * k * alpha;
+              d.vy += (p.y - d.y) * k * alpha;
+            }
+          }
+          force.initialize = function (init) {
+            nds = init;
+          };
+          return force;
+        }
+
+        function nodeKey(d) {
+          return d.props.FEATURE_ID != null ? String(d.props.FEATURE_ID) : String(d.lng) + ',' + String(d.lat);
+        }
+
+        function collectVisibleFeatures() {
+          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return [];
+          var b = map.getBounds();
+          var padX = (b.getEast() - b.getWest()) * 0.12;
+          var padY = (b.getNorth() - b.getSouth()) * 0.12;
+          var west = b.getWest() - padX;
+          var east = b.getEast() + padX;
+          var south = b.getSouth() - padY;
+          var north = b.getNorth() + padY;
+          var feats = geojson.features || [];
+          var out = [];
+          for (var i = 0; i < feats.length; i++) {
+            var f = feats[i];
+            var g = f.geometry;
+            if (!g || g.type !== 'Point') continue;
+            var c = f.geometry.coordinates;
+            if (c[0] < west || c[0] > east || c[1] < south || c[1] > north) continue;
+            out.push(f);
+          }
+          if (out.length > MAX_FORCE_LABELS) {
+            var step = Math.ceil(out.length / MAX_FORCE_LABELS);
+            var thin = [];
+            for (var j = 0; j < out.length; j += step) thin.push(out[j]);
+            out = thin;
+          }
+          return out;
+        }
+
+        function clearOverlay() {
+          gLines.selectAll('*').remove();
+          gLabels.selectAll('*').remove();
+          if (simulation) {
+            simulation.stop();
+            simulation = null;
+          }
+          nodes = [];
+        }
+
+        function onLabelClick(event, d) {
+          event.stopPropagation();
+          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
+          new maplibregl.Popup({ maxWidth: '360px' })
+            .setLngLat([d.lng, d.lat])
+            .setHTML(popupHtml(d.props, [d.lng, d.lat]))
+            .addTo(map);
+        }
+
+        function render() {
+          gLines
+            .selectAll('line')
+            .data(nodes, nodeKey)
+            .join('line')
+            .attr('stroke', 'rgba(26, 95, 180, 0.82)')
+            .attr('stroke-width', 1.6)
+            .attr('stroke-linecap', 'round')
+            .attr('x1', function (d) {
+              return map.project([d.lng, d.lat]).x;
+            })
+            .attr('y1', function (d) {
+              return map.project([d.lng, d.lat]).y;
+            })
+            .attr('x2', function (d) {
+              return d.x;
+            })
+            .attr('y2', function (d) {
+              return d.y;
+            });
+
+          gLabels
+            .selectAll('text')
+            .data(nodes, nodeKey)
+            .join(
+              function (enter) {
+                return enter
+                  .append('text')
+                  .attr('class', 'force-prk-label')
+                  .attr('fill', '#0d1117')
+                  .attr('stroke', '#fff')
+                  .attr('stroke-width', 2.5)
+                  .attr('paint-order', 'stroke')
+                  .attr('text-anchor', 'middle')
+                  .attr('dominant-baseline', 'middle')
+                  .style('font-size', '11px')
+                  .style('font-weight', '600')
+                  .on('click.forceprk', onLabelClick)
+                  .on('mouseenter.forceprk', function () {
+                    if (map.getZoom() > ZOOM_CIRCLE_SHOW) map.getCanvas().style.cursor = 'pointer';
+                  })
+                  .on('mouseleave.forceprk', function () {
+                    map.getCanvas().style.cursor = '';
+                  });
+              },
+              function (update) {
+                return update;
+              },
+              function (exit) {
+                return exit.remove();
+              }
+            )
+            .attr('x', function (d) {
+              return d.x;
+            })
+            .attr('y', function (d) {
+              return d.y;
+            })
+            .text(function (d) {
+              return d.label;
+            });
+        }
+
+        function runRebuild() {
+          clearOverlay();
+          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
+
+          var feats = collectVisibleFeatures();
+          if (!feats.length) return;
+
+          nodes = feats.map(function (f) {
+            var c = f.geometry.coordinates;
+            var props = f.properties || {};
+            var prk = props.PRK_CPT;
+            var label = prk != null && prk !== '' ? String(prk) : '—';
+            var p0 = map.project([c[0], c[1]]);
+            return {
+              lng: c[0],
+              lat: c[1],
+              props: props,
+              label: label,
+              r: Math.max(12, label.length * 5 + 8),
+              x: p0.x + (Math.random() - 0.5) * 8,
+              y: p0.y + (Math.random() - 0.5) * 8,
+              vx: 0,
+              vy: 0
+            };
+          });
+
+          simulation = d3
+            .forceSimulation(nodes)
+            .velocityDecay(0.48)
+            .alphaDecay(0.038)
+            .alphaMin(0.001)
+            .force('charge', d3.forceManyBody().strength(-32))
+            .force('collide', d3.forceCollide().radius(function (d) {
+              return d.r;
+            }).iterations(2))
+            .force('anchor', forceMapAnchor(map, 0.24))
+            .on('tick', render);
+
+          var preTicks = 100;
+          for (var t = 0; t < preTicks; t++) {
+            simulation.tick();
+          }
+          render();
+          simulation.alpha(1).restart();
+        }
+
+        function scheduleRebuild() {
+          if (debounceId) clearTimeout(debounceId);
+          debounceId = setTimeout(function () {
+            debounceId = null;
+            runRebuild();
+          }, 80);
+        }
+
+        map.on('moveend', scheduleRebuild);
+        map.on('zoomend', scheduleRebuild);
+        map.on('resize', scheduleRebuild);
+        var lastMoveBoost = 0;
+        map.on('move', function () {
+          if (!simulation || map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
+          var now = Date.now();
+          if (now - lastMoveBoost < 45) return;
+          lastMoveBoost = now;
+          simulation.alpha(Math.max(simulation.alpha(), 0.1)).restart();
+        });
+        map.on('zoom', function () {
+          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) {
+            clearOverlay();
+          } else {
+            scheduleRebuild();
+          }
+        });
+
+        map.once('idle', runRebuild);
+        scheduleRebuild();
+      }
+
+      var map = new maplibregl.Map({
+        container: 'map',
+        attributionControl: true,
+        style: {
+          version: 8,
+          sources: {
+            osm: {
+              type: 'raster',
+              tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+              tileSize: 256,
+              attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            }
+          },
+          layers: [
+            {
+              id: 'osm',
+              type: 'raster',
+              source: 'osm',
+              minzoom: 0,
+              maxzoom: 19
+            }
+          ]
+        },
+        center: [-0.12, 51.5],
+        zoom: 10
+      });
+
+      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+      var zoomReadoutEl = document.getElementById('zoom-readout');
+      function updateZoomReadout() {
+        zoomReadoutEl.textContent = 'Zoom: ' + map.getZoom().toFixed(2);
+      }
+      map.on('zoom', updateZoomReadout);
+      map.on('zoomend', updateZoomReadout);
+      updateZoomReadout();
+
+      map.on('load', function () {
+        fetch('data/cycle_parking.json')
+          .then(function (r) {
+            if (!r.ok) throw new Error('Failed to load data: ' + r.status);
+            return r.json();
+          })
+          .then(function (geojson) {
+            var bounds = boundsFromGeoJSON(geojson);
+
+            map.addSource('parking', {
+              type: 'geojson',
+              data: geojson
+            });
+
+            map.addLayer({
+              id: 'parking-heat',
+              type: 'heatmap',
+              source: 'parking',
+              paint: {
+                'heatmap-weight': heatmapWeightExpr,
+                'heatmap-intensity': [
+                  'interpolate',
+                  ['linear'],
+                  ['zoom'],
+                  8,
+                  0.8,
+                  12,
+                  1.2,
+                  15,
+                  1.5
+                ],
+                'heatmap-radius': [
+                  'interpolate',
+                  ['linear'],
+                  ['zoom'],
+                  8,
+                  12,
+                  12,
+                  18,
+                  15,
+                  28
+                ],
+                'heatmap-color': [
+                  'interpolate',
+                  ['linear'],
+                  ['heatmap-density'],
+                  0,
+                  'rgba(33, 102, 172, 0)',
+                  0.2,
+                  'rgb(103, 169, 207)',
+                  0.4,
+                  'rgb(209, 229, 240)',
+                  0.6,
+                  'rgb(253, 219, 199)',
+                  0.8,
+                  'rgb(239, 138, 98)',
+                  1,
+                  'rgb(178, 24, 43)'
+                ],
+                'heatmap-opacity': heatmapOpacityExpr
+              }
+            });
+
+            map.addLayer({
+              id: 'parking-point',
+              type: 'circle',
+              source: 'parking',
+              paint: {
+                'circle-radius': [
+                  'interpolate',
+                  ['linear'],
+                  ['zoom'],
+                  ZOOM_CIRCLE_SHOW,
+                  5.5,
+                  14,
+                  7.5,
+                  16,
+                  9.5,
+                  18,
+                  11.5
+                ],
+                'circle-color': '#1a5fb4',
+                'circle-stroke-width': 1,
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-opacity': circleOpacityExpr,
+                'circle-opacity': circleOpacityExpr
+              }
+            });
+
+            map.fitBounds(bounds, { padding: 48, maxZoom: 14 });
+
+            setupForceLabelOverlay(map, geojson);
+
+            var CLICK_QUERY_RADIUS_PX = 20;
+
+            function onMapParkingClick(e) {
+              if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
+              var hits = map.queryRenderedFeatures(e.point, {
+                layers: ['parking-point'],
+                radius: CLICK_QUERY_RADIUS_PX
+              });
+              var f = hits[0];
+              if (!f || !f.properties) return;
+              var coords = f.geometry && f.geometry.type === 'Point' && f.geometry.coordinates
+                ? f.geometry.coordinates
+                : [e.lngLat.lng, e.lngLat.lat];
+              new maplibregl.Popup({ maxWidth: '360px' })
+                .setLngLat(e.lngLat)
+                .setHTML(popupHtml(f.properties, coords))
+                .addTo(map);
+            }
+
+            map.on('click', onMapParkingClick);
+
+            map.on('mouseenter', 'parking-point', function () {
+              if (map.getZoom() > ZOOM_CIRCLE_SHOW) map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', 'parking-point', function () {
+              map.getCanvas().style.cursor = '';
+            });
+            map.on('zoom', function () {
+              if (map.getZoom() <= ZOOM_CIRCLE_SHOW) {
+                map.getCanvas().style.cursor = '';
+              }
+            });
+          })
+          .catch(function (err) {
+            console.error(err);
+            var el = document.createElement('div');
+            el.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#fff;padding:24px;text-align:center;z-index:2;';
+            el.innerHTML = '<p>Could not load <code>data/cycle_parking.json</code>. Serve this folder over HTTP (e.g. <code>python3 -m http.server</code>) and open the site from <code>http://localhost:…</code>.</p>';
+            document.body.appendChild(el);
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

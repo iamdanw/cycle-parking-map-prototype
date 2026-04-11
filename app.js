@@ -746,14 +746,15 @@
     this._toggleBtn = null;
   };
 
-  map.addControl(new PlaceSearchControl(), 'top-left');
-  map.addControl(new maplibregl.NavigationControl(), 'top-right');
   var geolocateControl = new maplibregl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
     fitBoundsOptions: { maxZoom: 14 },
     trackUserLocation: false
   });
-  map.addControl(geolocateControl, 'top-right');
+  map.addControl(geolocateControl, 'bottom-right');
+  map.addControl(new PlaceSearchControl(), 'bottom-right');
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  map.addControl(new maplibregl.AttributionControl(), 'top-left');
 
   map.on('load', function () {
     applyBasemapTheme(map);

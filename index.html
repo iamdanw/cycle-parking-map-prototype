@@ -645,6 +645,14 @@
       }
 
       map.addControl(new maplibregl.NavigationControl(), 'top-right');
+      map.addControl(
+        new maplibregl.GeolocateControl({
+          positionOptions: { enableHighAccuracy: true },
+          fitBoundsOptions: { maxZoom: 16 },
+          trackUserLocation: false
+        }),
+        'top-right'
+      );
 
       map.on('load', function () {
         fetch('data/cycle_parking.json')

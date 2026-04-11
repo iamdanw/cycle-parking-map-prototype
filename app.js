@@ -501,9 +501,13 @@
       if (collapsed) aside.setAttribute('inert', '');
       else aside.removeAttribute('inert');
     }
-    var openTab = document.getElementById('sidebar-open-tab');
-    if (openTab) {
-      openTab.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    var filterToggle = document.getElementById('sidebar-filter-toggle');
+    if (filterToggle) {
+      filterToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      filterToggle.setAttribute(
+        'aria-label',
+        collapsed ? 'Show facility filters' : 'Hide facility filters'
+      );
     }
     var closeBtn = document.getElementById('sidebar-close-btn');
     if (closeBtn) {
@@ -517,13 +521,6 @@
   }
 
   applySidebarCollapsed(!sidebarWideMq.matches);
-
-  var sidebarOpenTab = document.getElementById('sidebar-open-tab');
-  if (sidebarOpenTab) {
-    sidebarOpenTab.addEventListener('click', function () {
-      applySidebarCollapsed(false);
-    });
-  }
 
   function formatPhotonLabel(props) {
     if (!props) return 'Location';
@@ -549,6 +546,49 @@
   /** Photon bbox=minLon,minLat,maxLon,maxLat — approx. Greater London (axis-aligned). */
   var PHOTON_GREATER_LONDON_BBOX = '-0.51,51.28,0.33,51.69';
 
+  function SidebarFilterControl() {}
+
+  SidebarFilterControl.prototype.onAdd = function (map) {
+    var self = this;
+    this._map = map;
+    this._container = document.createElement('div');
+    this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+
+    var btn = document.createElement('button');
+    this._toggleBtn = btn;
+    btn.type = 'button';
+    btn.id = 'sidebar-filter-toggle';
+    btn.className = 'maplibregl-ctrl-icon prk-sidebar-filter-toggle';
+    btn.setAttribute('aria-controls', 'filter-sidebar');
+    btn.title = 'Filter facility types';
+    btn.innerHTML =
+      '<span class="prk-sidebar-filter-toggle-icon" aria-hidden="true">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>' +
+      '</svg></span>';
+
+    btn.addEventListener('click', function () {
+      if (!appEl) return;
+      applySidebarCollapsed(!appEl.classList.contains('sidebar-collapsed'));
+    });
+
+    this._container.appendChild(btn);
+    return this._container;
+  };
+
+  SidebarFilterControl.prototype.getDefaultPosition = function () {
+    return 'bottom-right';
+  };
+
+  SidebarFilterControl.prototype.onRemove = function () {
+    if (this._container && this._container.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+    this._container = null;
+    this._map = null;
+    this._toggleBtn = null;
+  };
+
   function PlaceSearchControl() {}
 
   PlaceSearchControl.prototype.onAdd = function (map) {
@@ -564,6 +604,7 @@
     btn.setAttribute('aria-label', 'Search place or address');
     btn.setAttribute('aria-expanded', 'false');
     btn.setAttribute('aria-controls', 'prk-search-panel');
+    btn.title = 'Search for location';
     btn.innerHTML =
       '<span class="prk-search-toggle-icon" aria-hidden="true">' +
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
@@ -753,6 +794,8 @@
   });
   map.addControl(geolocateControl, 'bottom-right');
   map.addControl(new PlaceSearchControl(), 'bottom-right');
+  map.addControl(new SidebarFilterControl(), 'bottom-right');
+  if (appEl) applySidebarCollapsed(appEl.classList.contains('sidebar-collapsed'));
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.addControl(new maplibregl.AttributionControl(), 'top-left');
 

@@ -217,6 +217,20 @@
       border-radius: 6px;
       padding: 10px;
     }
+    .geolocate-disc-label {
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.2;
+      color: #0d47a1;
+      background: rgba(255, 255, 255, 0.94);
+      padding: 3px 7px;
+      border-radius: 5px;
+      border: 1px solid rgba(13, 71, 161, 0.35);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+      pointer-events: none;
+      white-space: nowrap;
+      font-family: system-ui, sans-serif;
+    }
   </style>
 </head>
 <body>
@@ -581,6 +595,63 @@
         return [[minX, minY], [maxX, maxY]];
       }
 
+      /** GeoJSON Polygon approximating a geodesic circle (metres), closed ring */
+      function geodesicCircleFeature(lng, lat, radiusMeters, numSegments) {
+        var R = 6371008.8;
+        var segments = numSegments || 64;
+        var deg2rad = Math.PI / 180;
+        var latRad = lat * deg2rad;
+        var lngRad = lng * deg2rad;
+        var angularDist = radiusMeters / R;
+        var ring = [];
+        for (var i = 0; i <= segments; i++) {
+          var bearing = (i / segments) * 2 * Math.PI;
+          var lat2 = Math.asin(
+            Math.sin(latRad) * Math.cos(angularDist) +
+            Math.cos(latRad) * Math.sin(angularDist) * Math.cos(bearing)
+          );
+          var lng2 =
+            lngRad +
+            Math.atan2(
+              Math.sin(bearing) * Math.sin(angularDist) * Math.cos(latRad),
+              Math.cos(angularDist) - Math.sin(latRad) * Math.sin(lat2)
+            );
+          ring.push([lng2 / deg2rad, lat2 / deg2rad]);
+        }
+        return {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'Polygon',
+            coordinates: [ring]
+          }
+        };
+      }
+
+      /** [lng, lat] of a point `distanceMeters` north along the surface from (lng, lat) */
+      function offsetNorthByMetres(lng, lat, distanceMeters) {
+        var R = 6371008.8;
+        var deg2rad = Math.PI / 180;
+        var latRad = lat * deg2rad;
+        var lngRad = lng * deg2rad;
+        var d = distanceMeters / R;
+        var bearing = 0;
+        var lat2 = Math.asin(
+          Math.sin(latRad) * Math.cos(d) + Math.cos(latRad) * Math.sin(d) * Math.cos(bearing)
+        );
+        var lng2 =
+          lngRad +
+          Math.atan2(
+            Math.sin(bearing) * Math.sin(d) * Math.cos(latRad),
+            Math.cos(d) - Math.sin(latRad) * Math.sin(lat2)
+          );
+        return [lng2 / deg2rad, lat2 / deg2rad];
+      }
+
+      var GEOLOCATE_DISC_METRES = 400;
+
+      var geolocateLabelMarker = null;
+
       var map = new maplibregl.Map({
         container: 'map',
         attributionControl: true,
@@ -645,16 +716,44 @@
       }
 
       map.addControl(new maplibregl.NavigationControl(), 'top-right');
-      map.addControl(
-        new maplibregl.GeolocateControl({
-          positionOptions: { enableHighAccuracy: true },
-          fitBoundsOptions: { maxZoom: 16 },
-          trackUserLocation: false
-        }),
-        'top-right'
-      );
+      var geolocateControl = new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        fitBoundsOptions: { maxZoom: 14 },
+        trackUserLocation: false
+      });
+      map.addControl(geolocateControl, 'top-right');
 
       map.on('load', function () {
+        map.addSource('user-geolocate-50m', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] }
+        });
+
+        geolocateControl.on('geolocate', function (ev) {
+          var coords = ev && ev.coords ? ev.coords : ev && ev.data && ev.data.coords ? ev.data.coords : null;
+          if (!coords || typeof coords.longitude !== 'number' || typeof coords.latitude !== 'number') return;
+          var lng = coords.longitude;
+          var lat = coords.latitude;
+          var src = map.getSource('user-geolocate-50m');
+          if (!src || typeof src.setData !== 'function') return;
+          src.setData({
+            type: 'FeatureCollection',
+            features: [geodesicCircleFeature(lng, lat, GEOLOCATE_DISC_METRES, 64)]
+          });
+          if (geolocateLabelMarker) {
+            geolocateLabelMarker.remove();
+            geolocateLabelMarker = null;
+          }
+          var labelEl = document.createElement('div');
+          labelEl.className = 'geolocate-disc-label';
+          labelEl.textContent = '🚲 1 min / 🚶 5 min';
+          labelEl.setAttribute('aria-hidden', 'true');
+          var labelLngLat = offsetNorthByMetres(lng, lat, GEOLOCATE_DISC_METRES);
+          geolocateLabelMarker = new maplibregl.Marker({ element: labelEl, anchor: 'center' })
+            .setLngLat(labelLngLat)
+            .addTo(map);
+        });
+
         fetch('data/cycle_parking.json')
           .then(function (r) {
             if (!r.ok) throw new Error('Failed to load data: ' + r.status);
@@ -715,6 +814,17 @@
                   'rgb(178, 24, 43)'
                 ],
                 'heatmap-opacity': heatmapOpacityExpr
+              }
+            });
+
+            map.addLayer({
+              id: 'user-geolocate-50m-outline',
+              type: 'line',
+              source: 'user-geolocate-50m',
+              paint: {
+                'line-color': '#0d47a1',
+                'line-width': 2,
+                'line-opacity': 0.65
               }
             });
 

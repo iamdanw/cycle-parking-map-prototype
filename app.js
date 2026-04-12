@@ -1,9 +1,5 @@
 (function () {
   var PRK_LABELS = {
-    PRK_CARR: 'On carriageway',
-    PRK_COVER: 'Covered',
-    PRK_SECURE: 'Secure',
-    PRK_LOCKER: 'Locker',
     PRK_SHEFF: 'Sheffield stand',
     PRK_MSTAND: 'M-stand',
     PRK_PSTAND: 'P-stand',
@@ -13,7 +9,11 @@
     PRK_WHEEL: 'Wheel rack',
     PRK_HANGAR: 'Hangar',
     PRK_TIER: 'Tiered',
-    PRK_OTHER: 'Other'
+    PRK_LOCKER: 'Locker',
+    PRK_COVER: 'Covered',
+    PRK_SECURE: 'Secure',
+    PRK_OTHER: 'Other',
+    PRK_CARR: 'On carriageway'
   };
 
   /** Facility keys used for circle colour (same order as PRK_LABELS, excluding PRK_CARR) */

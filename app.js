@@ -126,21 +126,20 @@
   ];
 
   /**
-   * Scales 128px raster PRK icons to sit inside parking-point circle-radius
-   * (same zoom stops as circle-radius).
+   * Scales 64px raster PRK icons to sit inside circle-radius. Uses `step` on
+   * zoom (not `interpolate`) so icon size stays constant between stops and
+   * MapLibre does less work while the zoom level animates.
    */
   var prkMapIconSizeExpr = [
-    'interpolate',
-    ['linear'],
+    'step',
     ['zoom'],
-    ZOOM_CIRCLE_SHOW,
-    0.056,
+    0.112,
     14,
-    0.076,
+    0.152,
     16,
-    0.096,
+    0.192,
     18,
-    0.117
+    0.234
   ];
 
   function prkMapIconImageId(prkKey) {
@@ -155,7 +154,7 @@
   function prkMapIconSvgDataUrl(primaryKey) {
     var inner = prkMapIconSvgInner(primaryKey);
     var svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="128" height="128" fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">' +
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">' +
       inner +
       '</svg>';
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
@@ -1049,6 +1048,8 @@
             id: 'parking-point-icon',
             type: 'symbol',
             source: 'parking',
+            /** Skip symbol layout entirely when circle layer is effectively off (big win when panning heatmap). */
+            minzoom: ZOOM_CIRCLE_SHOW + 1,
             layout: {
               'icon-image': prkPrimaryIconImageExpr(),
               'icon-size': prkMapIconSizeExpr,
@@ -1056,7 +1057,8 @@
               'icon-ignore-placement': true
             },
             paint: {
-              'icon-opacity': circleOpacityExpr
+              /** Layer minzoom matches full circle visibility; constant avoids zoom-driven paint re-eval. */
+              'icon-opacity': 1
             }
           });
 

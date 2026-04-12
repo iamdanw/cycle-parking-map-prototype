@@ -38,6 +38,52 @@
     NONE: '#90a4ae'
   };
 
+  /**
+   * Path markup for filter-dot icons (viewBox 0 0 24 24). Parent <svg> sets stroke from CSS.
+   * Keys mirror PRK_LABELS; stroke inherits as currentColor on .prk-filter-dot.
+   */
+  var PRK_FILTER_DOT_INNER = {
+    PRK_CARR:
+      '<path d="M7.5 19 11 6.5M16.5 19 13 6.5"/><path d="M12 19V6.5" stroke-dasharray="2 2.5"/>',
+    PRK_COVER: '<path d="M4 9 12 4l8 5"/><path d="M8 18v-6M16 18v-6"/>',
+    PRK_SECURE:
+      '<rect x="8" y="11" width="8" height="9" rx="1"/><path d="M10 11V9a2 2 0 0 1 4 0v2"/>',
+    PRK_LOCKER: '<rect x="7.5" y="5" width="9" height="14" rx="1"/><path d="M15 11v3"/>',
+    PRK_SHEFF:
+      '<path d="M7 18V10q2-2 4 0v8M13 18V10q2-2 4 0v8M6 18h12"/>',
+    PRK_MSTAND: '<path d="M5 18 9 7l3 6 3-6 4 11"/>',
+    PRK_PSTAND: '<path d="M9 18V6h4a4 4 0 0 1 4 4 4 4 0 0 1-4 4H9v4"/>',
+    PRK_HOOP: '<path d="M6 18V12q6-6 12 0v6"/>',
+    PRK_POST: '<path d="M12 6v12M9 18h6"/>',
+    PRK_BUTERF:
+      '<path d="M12 5 8 10 5 9M12 5l4 5 3-1M12 19l-4-5-3 1M12 19l4-5 3 1"/>',
+    PRK_WHEEL:
+      '<circle cx="9.5" cy="12" r="3.25"/><path d="M15 7.5v9M17.5 7.5v9M20 7.5v9M5 18h14"/>',
+    PRK_HANGAR: '<path d="M4 18V13l8-7 8 7v5"/>',
+    PRK_TIER: '<path d="M4 7h16M4 12h16M6 7v5M18 7v5"/>',
+    PRK_OTHER: '<circle cx="9" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>'
+  };
+
+  function appendPrkFilterDotIcon(dot, key) {
+    var inner = PRK_FILTER_DOT_INNER[key] || PRK_FILTER_DOT_INNER.PRK_OTHER;
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', 'prk-filter-dot-svg');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.85');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    var wrapper = document.createElementNS(ns, 'g');
+    wrapper.innerHTML = inner;
+    while (wrapper.firstChild) {
+      svg.appendChild(wrapper.firstChild);
+    }
+    dot.appendChild(svg);
+  }
+
   function primaryPrkCategory(props) {
     for (var i = 0; i < PRK_CATEGORY_ORDER.length; i++) {
       var k = PRK_CATEGORY_ORDER[i];
@@ -227,6 +273,7 @@
       dot.className = 'prk-filter-dot';
       dot.style.background =
         PRK_CATEGORY_COLORS[key] != null ? PRK_CATEGORY_COLORS[key] : PRK_CATEGORY_COLORS.NONE;
+      appendPrkFilterDotIcon(dot, key);
       labelEl.appendChild(input);
       labelEl.appendChild(dot);
       labelEl.appendChild(document.createTextNode(PRK_LABELS[key]));

@@ -125,6 +125,81 @@
     1
   ];
 
+  /**
+   * Scales 128px raster PRK icons to sit inside parking-point circle-radius
+   * (same zoom stops as circle-radius).
+   */
+  var prkMapIconSizeExpr = [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    ZOOM_CIRCLE_SHOW,
+    0.056,
+    14,
+    0.076,
+    16,
+    0.096,
+    18,
+    0.117
+  ];
+
+  function prkMapIconImageId(prkKey) {
+    return 'prk-dot-' + prkKey;
+  }
+
+  function prkMapIconSvgInner(primaryKey) {
+    if (primaryKey === 'NONE') return PRK_FILTER_DOT_INNER.PRK_OTHER;
+    return PRK_FILTER_DOT_INNER[primaryKey] || PRK_FILTER_DOT_INNER.PRK_OTHER;
+  }
+
+  function prkMapIconSvgDataUrl(primaryKey) {
+    var inner = prkMapIconSvgInner(primaryKey);
+    var svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="128" height="128" fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">' +
+      inner +
+      '</svg>';
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  function prkPrimaryIconImageExpr() {
+    var expr = ['match', ['get', 'PRIMARY_PRK']];
+    for (var pi = 0; pi < PRK_CATEGORY_ORDER.length; pi++) {
+      var pk = PRK_CATEGORY_ORDER[pi];
+      expr.push(pk, prkMapIconImageId(pk));
+    }
+    expr.push('NONE', prkMapIconImageId('NONE'));
+    expr.push(prkMapIconImageId('NONE'));
+    return expr;
+  }
+
+  function loadPrkMapDotImages(map, keys, onDone) {
+    var idx = 0;
+    function step() {
+      if (idx >= keys.length) {
+        onDone();
+        return;
+      }
+      var key = keys[idx];
+      idx++;
+      var id = prkMapIconImageId(key);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          map.addImage(id, img);
+        } catch (err) {
+          console.warn('Map PRK icon addImage', id, err);
+        }
+        step();
+      };
+      img.onerror = function () {
+        console.warn('Map PRK icon failed:', key);
+        step();
+      };
+      img.src = prkMapIconSvgDataUrl(key);
+    }
+    step();
+  }
+
   /** Heatmap stays visible at all zooms; eases down slightly when zoomed in so points and labels stay readable */
   var heatmapOpacityExpr = [
     'interpolate',
@@ -251,6 +326,7 @@
     var expr = buildPrkFilterExpression(enabled);
     map.setFilter('parking-point', expr);
     map.setFilter('parking-heat', expr);
+    if (map.getLayer('parking-point-icon')) map.setFilter('parking-point-icon', expr);
   }
 
   function initPrkFilterSidebar(map) {
@@ -967,46 +1043,70 @@
           }
         });
 
-        initPrkFilterSidebar(map);
-
-        map.fitBounds(bounds, { padding: 48, maxZoom: 14 });
-
-        var CLICK_QUERY_RADIUS_PX = 20;
-
-        function onMapParkingClick(e) {
-          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
-          var hits = map.queryRenderedFeatures(e.point, {
-            layers: ['parking-point'],
-            radius: CLICK_QUERY_RADIUS_PX
+        var prkMapIconKeys = PRK_CATEGORY_ORDER.concat(['NONE']);
+        loadPrkMapDotImages(map, prkMapIconKeys, function () {
+          map.addLayer({
+            id: 'parking-point-icon',
+            type: 'symbol',
+            source: 'parking',
+            layout: {
+              'icon-image': prkPrimaryIconImageExpr(),
+              'icon-size': prkMapIconSizeExpr,
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true
+            },
+            paint: {
+              'icon-opacity': circleOpacityExpr
+            }
           });
-          var f = hits[0];
-          if (!f || !f.properties) return;
-          var coords = f.geometry && f.geometry.type === 'Point' && f.geometry.coordinates
-            ? f.geometry.coordinates
-            : [e.lngLat.lng, e.lngLat.lat];
-          var popup = new maplibregl.Popup({ maxWidth: '360px' })
-            .setLngLat(e.lngLat)
-            .setHTML(popupHtml(f.properties, coords))
-            .addTo(map);
-          var popupNode = popup.getElement();
-          if (popupNode) setupParkingPopupPhotos(popupNode, f.properties);
-        }
 
-        map.on('click', onMapParkingClick);
+          initPrkFilterSidebar(map);
 
-        map.on('mouseenter', 'parking-point', function () {
-          if (map.getZoom() > ZOOM_CIRCLE_SHOW) map.getCanvas().style.cursor = 'pointer';
-        });
-        map.on('mouseleave', 'parking-point', function () {
-          map.getCanvas().style.cursor = '';
-        });
-        map.on('zoom', function () {
-          if (map.getZoom() <= ZOOM_CIRCLE_SHOW) {
-            map.getCanvas().style.cursor = '';
+          map.fitBounds(bounds, { padding: 48, maxZoom: 14 });
+
+          var CLICK_QUERY_RADIUS_PX = 20;
+
+          function onMapParkingClick(e) {
+            if (map.getZoom() <= ZOOM_CIRCLE_SHOW) return;
+            var hits = map.queryRenderedFeatures(e.point, {
+              layers: ['parking-point', 'parking-point-icon'],
+              radius: CLICK_QUERY_RADIUS_PX
+            });
+            var f = hits[0];
+            if (!f || !f.properties) return;
+            var coords = f.geometry && f.geometry.type === 'Point' && f.geometry.coordinates
+              ? f.geometry.coordinates
+              : [e.lngLat.lng, e.lngLat.lat];
+            var popup = new maplibregl.Popup({ maxWidth: '360px' })
+              .setLngLat(e.lngLat)
+              .setHTML(popupHtml(f.properties, coords))
+              .addTo(map);
+            var popupNode = popup.getElement();
+            if (popupNode) setupParkingPopupPhotos(popupNode, f.properties);
           }
-        });
 
-        applyMapTheme(map);
+          map.on('click', onMapParkingClick);
+
+          map.on('mouseenter', 'parking-point', function () {
+            if (map.getZoom() > ZOOM_CIRCLE_SHOW) map.getCanvas().style.cursor = 'pointer';
+          });
+          map.on('mouseleave', 'parking-point', function () {
+            map.getCanvas().style.cursor = '';
+          });
+          map.on('mouseenter', 'parking-point-icon', function () {
+            if (map.getZoom() > ZOOM_CIRCLE_SHOW) map.getCanvas().style.cursor = 'pointer';
+          });
+          map.on('mouseleave', 'parking-point-icon', function () {
+            map.getCanvas().style.cursor = '';
+          });
+          map.on('zoom', function () {
+            if (map.getZoom() <= ZOOM_CIRCLE_SHOW) {
+              map.getCanvas().style.cursor = '';
+            }
+          });
+
+          applyMapTheme(map);
+        });
       })
       .catch(function (err) {
         console.error(err);

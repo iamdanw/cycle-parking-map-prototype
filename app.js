@@ -273,10 +273,14 @@
     src.setSourceProperty(function () {
       src._options.tiles = dark
         ? ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png']
-        : ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'];
+        : [
+            'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+            'https://b.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+            'https://c.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png'
+          ];
       src._options.attribution = dark
         ? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | <a href="https://photon.komoot.io" target="_blank" rel="noopener noreferrer">Photon</a> | &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | <a href="https://photon.komoot.io" target="_blank" rel="noopener noreferrer">Photon</a>';
+        : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | <a href="https://www.cyclosm.org" target="_blank" rel="noopener noreferrer">CyclOSM</a> | <a href="https://photon.komoot.io" target="_blank" rel="noopener noreferrer">Photon</a>';
     });
   }
 
@@ -592,9 +596,14 @@
       sources: {
         osm: {
           type: 'raster',
-          tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          tiles: [
+            'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+            'https://b.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+            'https://c.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png'
+          ],
           tileSize: 256,
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | <a href="https://www.cyclosm.org" target="_blank" rel="noopener noreferrer">CyclOSM</a>'
         }
       },
       layers: [
